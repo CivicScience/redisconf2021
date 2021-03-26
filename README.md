@@ -69,14 +69,29 @@ GearsBuilder(
     desc="count randomString CQL",
 ).map(doCommand).aggregate(0, count_sum, count_sum).register(
     trigger="count", mode="async"
+)
 ```
+Where count_sum is:
+```
+def count_sum(a: int, r: int) -> int:
+    return a + r
+```
+The overall effect is that we:
+* registered a trigger named "count" 
+* have our library return a partial result per shard (db.executeCQL)
+* have gears aggregate the partial results into the final answer using aggregate
+
+We support many other command types with CQL, this is just one example. As you might imagine other
+commands have other post-doCommand chains of functions. 
+
+But you might ask: what is happening inside of the library?
 
 ## Converting CQL to objects
 We have Antlr grammar that looks something like this:
 ```
 compare_expr: column=Identifier op=compare_op compareValue=Integer;
 ```
-and then I used the visitor pattern to create objects.
+and then we override the generated visitor base class to create objects.
 
 ## Objects to answers
 All expression objects have:
@@ -86,8 +101,8 @@ All expression objects have:
         """Gets the inverted index for this Expression.."""
 
 ```
-This method gets me an object that represents the idea of an inverted index
-constrained by a range (in this case x > 3). InvertedIndexes have methods liks:
+For our example this method gets me an object that represents the idea of an inverted index
+constrained by a range (x > 3). InvertedIndexes have methods like:
 ```
     @property
     @abstractmethod
@@ -108,7 +123,7 @@ constrained by a range (in this case x > 3). InvertedIndexes have methods liks:
         """Persists this index into Redis if it's persistable (otherwise a no-op)."""
 ```
 
-This InvertedIndexes allowed me to easily write a method:
+These methods allow me to easily write:
 ```
     @staticmethod
     def size(inverted_index: InvertedIndex) -> int:
