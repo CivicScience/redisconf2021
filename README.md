@@ -1,3 +1,32 @@
+# Intro
+
+## The problem to solve
+
+Imagine we have the following table of data:
+
+| Respondent | Gender | Gender When | Age | Age When | 
+| :---: | :---: |  :---:  | :---: | :---: | 
+| Alice | Female | 1/1/2020 | Adult | 1/2/2020  | 
+| Bob | Male | 4/1/2020  | Middle Age | 4/2/2020 |
+| Carol | Female | 6/1/2009 | Middle Age | 4/2/2020 |
+| Dan | Male | 7/4/2012  | Senior | 7/2/2012 |
+| Eve | Female | 1/1/2021 | Adult | 1/2/2021  |
+
+Example queries:
+* How many rows? <br>`5`
+* How many rows where Gender is Female? <br>`3`
+* How many rows where Gender is Female and 1/1/2020 <= "Gender When" <= 1/1/2021 ? <br>`2`
+* What is the range of time in "Gender When" where Age is Middle Age? <br>`6/1/2009, 4/1/2020`
+* Set Gender to Male for Respondent Frank
+
+## Really? That's all?
+
+Yes. Though there are a couple of things that make this harder:
+* We can not define a schema for the columns, it has to be dynamic. This is sometimes called a "wide column store".
+* We have a lot of columns (10^6) and rows (10^9) and both are growing fast.
+* The data is sparse. 
+* We want to query against an arbitrary subset of columns which causes most normal indexing patterns to fail.
+
 # Crawl
 
 ## "Hello World"
@@ -22,7 +51,7 @@ three classes of indexes:
 * The respondent has a non-null value for the field = `any_<field>`
 * The respondent has a specific value for the field  = `value_<field>_<field value>`
 
-These indexes and indexes we can dynamically compute from them on the fly
+These indexes (or indexes we can dynamically compute from them on the fly)
 are equal in size to the answer in many cases, examples: `A is not null` or
 `A = 4 && B = 3 ||  C in {3,5}`. There are others that are not equal in size,
 but I know the index (or derived index) contains a subset of respondents that
@@ -42,7 +71,8 @@ else:
 # Run (and where we are now)
 The loop over respondents was slow and hashes used a lot of memory. By switching to sorted
 sets I was able to ensure all possible queries were able to be answered from the indexes
-themselves. But then to reduce memory I was able to convert low cardinality columns back into sets.
+themselves. Later, to reduce memory I was able to convert low cardinality columns from sorted
+sets back into sets.
 
 Some snippets of what the current solution looks like for a count command, example:
 `count from table where x>3`
@@ -91,9 +121,20 @@ We have Antlr grammar that looks something like this:
 ```
 compare_expr: column=Identifier op=compare_op compareValue=Integer;
 ```
-and then we override the generated visitor base class to create objects.
+Antlr can generate Python to parse a string based on the grammar. We used
+the visitor pattern option which looks like:
+```
+    def visitCompare_expr(
+        self, ctx: CascabelParser.Compare_exprContext
+    ) -> CompareExpression:
+        return CompareExpression(
+            Column(ctx.column.text),  
+            Operator.get_instance(ctx.op.getText()), 
+            int(ctx.compareValue.text),
+        )
+```
 
-## Objects to answers
+## Getting from objects to results
 All expression objects have:
 ```
     @abstractmethod
@@ -128,4 +169,5 @@ These methods allow me to easily write:
     @staticmethod
     def size(inverted_index: InvertedIndex) -> int:
 ```
-which basically manages persisting the set (if needed) and doing a ZCARD vs SCARD.
+which basically manages persisting the set (if needed) and doing a ZCARD vs SCARD depending
+on the type of the set in Redis.
